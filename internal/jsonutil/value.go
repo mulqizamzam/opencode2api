@@ -91,9 +91,24 @@ func SliceAt(object map[string]any, path ...string) []any {
 	return values
 }
 
+// The AtOK variants report presence alongside the value so critical reads
+// can tell "field absent" apart from "field explicitly zero". Prefer them
+// wherever a missing field must not silently behave like 0/false/"": the
+// plain At helpers below keep the historical lenient zero-value behavior
+// for the many tolerant call sites.
+func SliceAtOK(object map[string]any, path ...string) ([]any, bool) {
+	values, ok := AnyAt(object, path...).([]any)
+	return values, ok
+}
+
 func MapAt(object map[string]any, path ...string) map[string]any {
 	value, _ := AnyAt(object, path...).(map[string]any)
 	return value
+}
+
+func MapAtOK(object map[string]any, path ...string) (map[string]any, bool) {
+	value, ok := AnyAt(object, path...).(map[string]any)
+	return value, ok
 }
 
 func StringAt(object map[string]any, path ...string) string {
@@ -101,9 +116,19 @@ func StringAt(object map[string]any, path ...string) string {
 	return value
 }
 
+func StringAtOK(object map[string]any, path ...string) (string, bool) {
+	value, ok := AnyAt(object, path...).(string)
+	return value, ok
+}
+
 func BoolAt(object map[string]any, path ...string) bool {
 	value, _ := AnyAt(object, path...).(bool)
 	return value
+}
+
+func BoolAtOK(object map[string]any, path ...string) (bool, bool) {
+	value, ok := AnyAt(object, path...).(bool)
+	return value, ok
 }
 
 func IntAt(object map[string]any, path ...string) int {
@@ -129,6 +154,34 @@ func Int64At(object map[string]any, path ...string) int64 {
 	}
 }
 
+func IntAtOK(object map[string]any, path ...string) (int, bool) {
+	v := Int64AtOK(object, path...)
+	return int(v), v != 0
+}
+
+func Int64AtOK(object map[string]any, path ...string) (int64, bool) {
+	value := AnyAt(object, path...)
+	switch number := value.(type) {
+	case float64:
+		if math.IsNaN(number) || math.IsInf(number, 0) || number >= math.MaxInt64 || number < math.MinInt64 {
+			return 0, false
+		}
+		return int64(number), true
+	case int:
+		return int64(number), true
+	case int64:
+		return number, true
+	case json.Number:
+		integer, err := number.Int64()
+		if err != nil {
+			return 0, false
+		}
+		return integer, true
+	default:
+		return 0, false
+	}
+}
+
 // floatToInt64 refuses a float that has no int64 representation. Go leaves that
 // conversion implementation-defined — on amd64 1e300 and NaN both become
 // math.MinInt64 — which would turn a malformed field (a token count from an
@@ -139,6 +192,11 @@ func floatToInt64(value float64) int64 {
 		return 0
 	}
 	return int64(value)
+}
+
+func Int64AtOK(object map[string]any, path ...string) (int64, bool) {
+	value, ok := IntAtOK(object, path...)
+	return int64(value), ok
 }
 
 func AnyAt(object map[string]any, path ...string) any {
