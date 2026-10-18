@@ -1,10 +1,36 @@
 # opencode2api
 
-[English](README.md) | [简体中文](README.zh-CN.md) | [Tiếng Việt](README.vi.md)
+[English](README.md) | [简体中文](README.zh-CN.md) | [Tiếng Việt](README.vi.md) | [Bahasa Indonesia (beginner guide)](README.id.md)
 
 A Go gateway for **OpenCode Zen and Zen Go**. It exposes Chat Completions, Responses, and Anthropic Messages endpoints, translates between their native protocols, and manages upstream keys and proxies.
 
 The executable includes the WebUI. Running the service requires no Node.js runtime or database.
+
+## First time here?
+
+Follow these five steps. Every command is copy-paste ready, and none of them needs a database or Node.js.
+
+```bash
+git clone https://github.com/mulqizamzam/opencode2api.git
+cd opencode2api
+cp config.example.json config.json          # Windows: Copy-Item config.example.json config.json
+go build -o opencode2api ./cmd/opencode2api # Windows: go build -o opencode2api.exe ./cmd/opencode2api
+```
+
+Then edit `config.json`. Only three things matter for a first run:
+
+1. `server_keys`: put one key of your own here. It is the key your applications will send to this gateway, not an OpenCode key.
+2. `anonymous`: set it to `true` to run without any OpenCode key, or fill `zen_keys` / `go_keys` with a real upstream key instead.
+3. `webui.password`: at least 10 characters. The password you will use to log in.
+
+```bash
+./opencode2api -config config.json          # Windows: .\opencode2api.exe -config config.json
+```
+
+- API for your applications: `http://127.0.0.1:8080`
+- WebUI in a browser: `http://localhost:8081`
+
+A beginner-oriented walkthrough, including what every config field means and what each error message tells you, is in the [Bahasa Indonesia beginner guide](README.id.md). The rest of this document is the full reference.
 
 ## Capabilities
 
