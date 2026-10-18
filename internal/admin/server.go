@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 	"sync"
@@ -76,21 +77,18 @@ func (a *Server) Handler() http.Handler {
 	return a.securityHeaders(telemetry.Recover(a.logger, mux))
 }
 
-// htmlContentTypeFix wraps an http.ResponseWriter to fix Content-Type for HTML files
-// after http.FileServer runs, since FileServer misdetects HTML as video/html.
-type htmlContentTypeFix struct {
-	http.ResponseWriter
-	path   string
-	fixed  bool
-}
-
-func (w *htmlContentTypeFix) WriteHeader(statusCode int) {
-	// Fix Content-Type for HTML files after FileServer runs
-	if !w.fixed && (w.path == "/" || w.path == "/index.html" || strings.HasSuffix(w.path, ".html")) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.fixed = true
-	}
-	w.ResponseWriter.WriteHeader(statusCode)
+// assetContentTypes are the types the embedded console needs in order to
+// render. They are declared here instead of being resolved through
+// mime.TypeByExtension, which reads the operating system's MIME database (on
+// Windows, the registry under HKEY_CLASSES_ROOT). A machine with wrong entries
+// there - this one maps .html to "video/html" and several other extensions to
+// "video/<ext>" through per-user overrides - makes a browser download the
+// console instead of rendering it. The console owns its assets, so it owns
+// their types.
+var assetContentTypes = map[string]string{
+	".css":  "text/css; charset=utf-8",
+	".html": "text/html; charset=utf-8",
+	".js":   "text/javascript; charset=utf-8",
 }
 
 func (a *Server) staticHandler() http.Handler {
@@ -101,14 +99,24 @@ func (a *Server) staticHandler() http.Handler {
 			writeAdminError(w, http.StatusNotFound, "not_found", "management endpoint not found")
 			return
 		}
-		if r.URL.Path != "/" && r.URL.Path != "/index.html" {
-			if _, err := fs.Stat(assets, strings.TrimPrefix(r.URL.Path, "/")); err != nil {
+		name := r.URL.Path
+		if name != "/" && name != "/index.html" {
+			if _, err := fs.Stat(assets, strings.TrimPrefix(name, "/")); err != nil {
+				name = "/"
 				r.URL.Path = "/"
 			}
 		}
-		// Wrap ResponseWriter to fix Content-Type after FileServer runs
-		fixed := &htmlContentTypeFix{ResponseWriter: w, path: r.URL.Path}
-		files.ServeHTTP(fixed, r)
+		if name == "/" {
+			// http.FileServer answers the root with index.html.
+			name = "/index.html"
+		}
+		// Set before FileServer runs: http.ServeContent keeps a type the
+		// handler already chose and consults the system database only when
+		// the header is absent.
+		if contentType, ok := assetContentTypes[strings.ToLower(path.Ext(name))]; ok {
+			w.Header().Set("Content-Type", contentType)
+		}
+		files.ServeHTTP(w, r)
 	})
 }
 

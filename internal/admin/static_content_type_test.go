@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"mime"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -40,5 +41,51 @@ func TestStaticHandlerServesConsoleAsHTML(t *testing.T) {
 	server.Handler().ServeHTTP(asset, httptest.NewRequest(http.MethodGet, "/css/tokens.css", nil))
 	if got := asset.Header().Get("Content-Type"); !strings.HasPrefix(got, "text/css") {
 		t.Fatalf("GET /css/tokens.css Content-Type = %q, want text/css", got)
+	}
+}
+
+// The console must not take its asset types from the operating system's MIME
+// database. mime.TypeByExtension reads that database (on Windows, the registry
+// under HKEY_CLASSES_ROOT), and a machine with wrong entries serves the console
+// with types no browser accepts. This machine carries per-user overrides of the
+// form "video/<ext>" for .html, .htm, .txt, .css-adjacent assets, so the same
+// corruption is recreated here and the console is expected to ignore it.
+func TestStaticHandlerIgnoresCorruptSystemMimeDatabase(t *testing.T) {
+	corrupt := map[string]string{
+		".css":  "video/css",
+		".html": "video/html",
+		".js":   "video/js",
+	}
+	builtin := map[string]string{
+		".css":  "text/css; charset=utf-8",
+		".html": "text/html; charset=utf-8",
+		".js":   "text/javascript; charset=utf-8",
+	}
+	restore := make(map[string]string, len(corrupt))
+	for ext, wrong := range corrupt {
+		original := mime.TypeByExtension(ext)
+		if original == "" {
+			original = builtin[ext]
+		}
+		restore[ext] = original
+		mime.AddExtensionType(ext, wrong)
+	}
+	defer func() {
+		for ext, original := range restore {
+			mime.AddExtensionType(ext, original)
+		}
+	}()
+
+	server, _ := newTestAdmin(t, testRuntimeConfig())
+	for _, test := range []struct{ path, want string }{
+		{"/", "text/html"},
+		{"/css/tokens.css", "text/css"},
+		{"/js/main.js", "text/javascript"},
+	} {
+		recorder := httptest.NewRecorder()
+		server.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, test.path, nil))
+		if got := recorder.Header().Get("Content-Type"); !strings.HasPrefix(got, test.want) {
+			t.Errorf("GET %s with a corrupt system MIME database: Content-Type = %q, want %s", test.path, got, test.want)
+		}
 	}
 }
