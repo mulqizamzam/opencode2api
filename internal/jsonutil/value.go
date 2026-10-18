@@ -3,6 +3,7 @@ package jsonutil
 
 import (
 	"encoding/json"
+	"math"
 	"strings"
 )
 
@@ -106,22 +107,38 @@ func BoolAt(object map[string]any, path ...string) bool {
 }
 
 func IntAt(object map[string]any, path ...string) int {
-	value := AnyAt(object, path...)
-	switch number := value.(type) {
+	return int(Int64At(object, path...))
+}
+
+func Int64At(object map[string]any, path ...string) int64 {
+	switch number := AnyAt(object, path...).(type) {
 	case float64:
-		return int(number)
+		return floatToInt64(number)
 	case int:
+		return int64(number)
+	case int64:
 		return number
 	case json.Number:
-		integer, _ := number.Int64()
-		return int(integer)
+		integer, err := number.Int64()
+		if err != nil {
+			return 0
+		}
+		return integer
 	default:
 		return 0
 	}
 }
 
-func Int64At(object map[string]any, path ...string) int64 {
-	return int64(IntAt(object, path...))
+// floatToInt64 refuses a float that has no int64 representation. Go leaves that
+// conversion implementation-defined — on amd64 1e300 and NaN both become
+// math.MinInt64 — which would turn a malformed field (a token count from an
+// upstream, a max_tokens from a client) into a garbage number instead of the
+// "absent" zero every caller already handles.
+func floatToInt64(value float64) int64 {
+	if math.IsNaN(value) || math.IsInf(value, 0) || value >= math.MaxInt64 || value < math.MinInt64 {
+		return 0
+	}
+	return int64(value)
 }
 
 func AnyAt(object map[string]any, path ...string) any {

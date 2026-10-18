@@ -549,12 +549,12 @@ func (emitter *bridgeStreamEmitter) Finish() error {
 			ID:        emitter.id,
 			Model:     emitter.model,
 			Text:      emitter.text.String(),
-			Reasoning: []bridgeBlock{{Kind: "reasoning", ID: emitter.reasoningItemID, Text: emitter.reasoning.String(), Signature: emitter.reasoningSignature.String()}},
+			Reasoning: []bridgeBlock{{Kind: "reasoning", ID: emitter.reasoningItemID, Text: emitter.reasoning.String(), Signature: emitter.reasoningSignature.String(), Encrypted: emitter.reasoningEncrypted}},
 			Stop:      emitter.stop,
 			Usage:     emitter.usage,
 			Created:   emitter.created,
 		}
-		if emitter.reasoning.Len() == 0 && emitter.reasoningSignature.Len() == 0 {
+		if emitter.reasoning.Len() == 0 && emitter.reasoningSignature.Len() == 0 && emitter.reasoningEncrypted == "" {
 			response.Reasoning = nil
 		}
 		for _, key := range emitter.order {

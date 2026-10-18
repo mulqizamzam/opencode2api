@@ -205,7 +205,7 @@ func (a *Server) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 		ServerKeyMetadata: current.ServerKeyMetadata,
 		Rotation:          current.Rotation,
 		Listen:            update.Listen, ServerKeys: serverKeys, ZenKeys: zenKeys, GoKeys: goKeys, Anonymous: update.Anonymous, Proxies: proxies, ProxyFile: update.ProxyFile,
-		Upstream: update.Upstream, Retry: update.Retry, Models: update.Models, Performance: update.Performance, Logging: update.Logging, Prefer: update.Prefer,
+		Upstream: mergeUpstream(current.Upstream, update.Upstream), Retry: update.Retry, Models: update.Models, Performance: update.Performance, Logging: update.Logging, Prefer: update.Prefer,
 		Reasoning: reasoning,
 		WebUI:     config.WebUIConfig{Enabled: update.WebUI.Enabled, Listen: update.WebUI.Listen, Username: current.WebUI.Username, PasswordHash: current.WebUI.PasswordHash, SessionTTLMinutes: update.WebUI.SessionTTLMinutes},
 	}
@@ -216,6 +216,18 @@ func (a *Server) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"result": result, "config": a.configView()})
+}
+
+// mergeUpstream keeps the stored anonymous endpoint when the request carries
+// none. The console edits zen and go only, so an absent anonymous field means
+// "not sent" rather than "reset": Normalize replaces an empty value with the
+// built-in default, which silently moved the keyless lane back to the default
+// host on every save.
+func mergeUpstream(current, update config.UpstreamConfig) config.UpstreamConfig {
+	if strings.TrimSpace(update.Anonymous) == "" {
+		update.Anonymous = current.Anonymous
+	}
+	return update
 }
 
 func (a *Server) handleReload(w http.ResponseWriter, _ *http.Request) {

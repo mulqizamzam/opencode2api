@@ -168,8 +168,30 @@ func (g *Gateway) rotationAttempt(parent context.Context, w http.ResponseWriter,
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	seconds := g.rotation.Snapshot().FirstOutputSeconds
-	timer := time.AfterFunc(time.Duration(seconds)*time.Second, cancel)
-	defer timer.Stop()
+	// The first-output timer bounds how long a streaming attempt may wait for
+	// its first event before the model is abandoned. A non-stream request has
+	// no first event to wait for: its whole body is the response, and the
+	// request budget (retry.timeout_seconds) already bounds that. Arming the
+	// timer there turned it into a total generation deadline that cancelled
+	// healthy requests, paused the model for it and advanced the group, so a
+	// non-streaming client was told the group had no usable model.
+	stream := jsonutil.BoolAt(payload, "stream")
+	var firstOutputTimer *time.Timer
+	if stream {
+		firstOutputTimer = time.AfterFunc(time.Duration(seconds)*time.Second, cancel)
+		defer firstOutputTimer.Stop()
+	}
+	// firstOutputReached reports whether the attempt still owns its first
+	// output: no timer was armed, or the one that was is stopped in time.
+	firstOutputReached := func() error {
+		if firstOutputTimer != nil && !firstOutputTimer.Stop() {
+			return context.DeadlineExceeded
+		}
+		if ctx.Err() != nil {
+			return context.DeadlineExceeded
+		}
+		return nil
+	}
 	copyPayload := make(map[string]any, len(payload))
 	for k, v := range payload {
 		copyPayload[k] = v
@@ -225,13 +247,13 @@ func (g *Gateway) rotationAttempt(parent context.Context, w http.ResponseWriter,
 		}
 		return result
 	}
+	// A positive Retry-After replaces the documented default pause of 60s.
+	// "0" and a date that has already passed mean the upstream offers no usable
+	// delay, which must not be read as "retry this exhausted model at once":
+	// that only spends another attempt on the model that just refused.
 	retryAfter := resp.Header.Get("Retry-After")
 	if pause := parseRetryAfter(retryAfter); pause > 0 {
 		result.pause = pause
-	} else if strings.TrimSpace(retryAfter) == "0" {
-		result.pause = 0
-	} else if _, err := http.ParseTime(retryAfter); err == nil {
-		result.pause = 0
 	}
 	if resp.StatusCode/100 != 2 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
@@ -243,10 +265,9 @@ func (g *Gateway) rotationAttempt(parent context.Context, w http.ResponseWriter,
 		}
 		return result
 	}
-	stream := jsonutil.BoolAt(payload, "stream")
 	ready := func() error {
-		if !timer.Stop() || ctx.Err() != nil {
-			return context.DeadlineExceeded
+		if err := firstOutputReached(); err != nil {
+			return err
 		}
 		w.Header().Set("X-Resolved-Model", route.ID)
 		w.Header().Set("x-request-id", ids.Request)
@@ -284,17 +305,14 @@ func (g *Gateway) rotationAttempt(parent context.Context, w http.ResponseWriter,
 		}
 		return result
 	}
-	b, err := io.ReadAll(io.LimitReader(resp.Body, (64<<20)+1))
-	if err == nil && len(b) > 64<<20 {
-		err = errors.New("response exceeds size limit")
-	}
+	b, err := readCappedBody(resp.Body, maxUpstreamResponseBytes)
 	if err != nil {
 		result.err = err
 		result.reason = "response_read_error"
 		return result
 	}
-	if !timer.Stop() || ctx.Err() != nil {
-		result.err = context.DeadlineExceeded
+	if err := firstOutputReached(); err != nil {
+		result.err = err
 		result.reason = "first_output_timeout"
 		return result
 	}

@@ -212,6 +212,21 @@ func Normalize(path string, cfg Config) (Config, error) {
 	if cfg.Performance.AttemptTimeoutSeconds < 0 {
 		return Config{}, errors.New("performance.attempt_timeout_seconds must not be negative (0 keeps the retry timeout)")
 	}
+	for _, field := range []struct {
+		name  string
+		value int
+	}{
+		{"retry.timeout_seconds", cfg.Retry.TimeoutSeconds},
+		{"models.refresh_seconds", cfg.Models.RefreshSeconds},
+		{"performance.idle_conn_timeout_seconds", cfg.Performance.IdleConnTimeoutSeconds},
+		{"performance.connect_timeout_seconds", cfg.Performance.ConnectTimeoutSeconds},
+		{"performance.failure_cooldown_seconds", cfg.Performance.FailureCooldownSeconds},
+		{"performance.attempt_timeout_seconds", cfg.Performance.AttemptTimeoutSeconds},
+	} {
+		if err := validateDurationSeconds(field.name, field.value); err != nil {
+			return Config{}, err
+		}
+	}
 	if cfg.Performance.FirstEventTimeoutSeconds < 0 || cfg.Performance.FirstEventTimeoutSeconds > 86400 {
 		return Config{}, errors.New("performance.first_event_timeout_seconds must be between 0 and 86400 (0 disables the first-event timeout)")
 	}
@@ -298,6 +313,23 @@ func normalizeReasoning(cfg *Config) error {
 		normalized[key] = level
 	}
 	cfg.Reasoning.EffortByModel = normalized
+	return nil
+}
+
+// maxDurationSeconds bounds every *_seconds field. A larger value cannot be
+// converted to a time.Duration without overflowing the int64 nanosecond count
+// it stores: the product wraps negative, so a ticker built from it panics the
+// process and a context deadline built from it has already expired. One day is
+// the ceiling first_event_timeout_seconds already documents.
+const maxDurationSeconds = 86400
+
+// validateDurationSeconds rejects a seconds value the conversion sites would
+// turn into a non-positive time.Duration. The per-field minimums are checked
+// where each field is read.
+func validateDurationSeconds(name string, value int) error {
+	if value > maxDurationSeconds {
+		return fmt.Errorf("%s must be at most %d", name, maxDurationSeconds)
+	}
 	return nil
 }
 

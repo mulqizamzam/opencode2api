@@ -67,7 +67,13 @@ func (parser *bridgeStreamParser) parseChatEvent(eventName string, value map[str
 	for _, raw := range jsonutil.SliceAt(value, "choices") {
 		choice, _ := raw.(map[string]any)
 		delta := jsonutil.MapAt(choice, "delta")
-		if reasoning := jsonutil.FirstString(jsonutil.StringAt(delta, "reasoning_content"), jsonutil.StringAt(delta, "reasoning")); reasoning != "" {
+		// The fragment is forwarded verbatim: the client concatenates the
+		// deltas, so trimming one of them glues two words together.
+		reasoning := jsonutil.StringAt(delta, "reasoning_content")
+		if reasoning == "" {
+			reasoning = jsonutil.StringAt(delta, "reasoning")
+		}
+		if reasoning != "" {
 			events = append(events, bridgeStreamEvent{Kind: "reasoning", Text: reasoning})
 		}
 		if text := jsonutil.StringAt(delta, "content"); text != "" {

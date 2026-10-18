@@ -104,7 +104,12 @@ func (h *LogHub) Recent(after uint64, limit int) ([]LogEvent, bool) {
 		}
 	}
 	if len(out) > limit {
+		// Only the newest slice is shipped. A resuming client is left with a
+		// hole between the cursor it presented and the first event here, and
+		// nothing else in the reply reveals it, so report the gap: a slow
+		// subscriber whose buffer overflowed relies on exactly this signal.
 		out = out[len(out)-limit:]
+		gap = gap || after > 0
 	}
 	return out, gap
 }

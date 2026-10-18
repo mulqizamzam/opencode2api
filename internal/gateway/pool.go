@@ -591,12 +591,25 @@ func (p *nodePool) MarkFailure(node *upstreamNode, resp *http.Response, err erro
 	node.cooldownUntil.Store(time.Now().Add(delay).UnixNano())
 }
 
+// maxRetryAfter caps the delay an upstream Retry-After can impose. The header
+// is untrusted input: multiplying an unbounded second count by time.Second
+// overflows int64 nanoseconds into a negative duration, and even a value that
+// fits can keep a key or a rotation model out of service for decades while the
+// rotation pause is persisted and only a manual reselect clears it. An hour is
+// the longest wait that still reads as "this credential is temporarily busy" —
+// anything longer is an operator decision, not an upstream one.
+const maxRetryAfter = time.Hour
+
 func parseRetryAfter(value string) time.Duration {
 	if seconds, err := strconv.Atoi(strings.TrimSpace(value)); err == nil && seconds > 0 {
+		if seconds > int(maxRetryAfter/time.Second) {
+			return maxRetryAfter
+		}
 		return time.Duration(seconds) * time.Second
 	}
 	if when, err := http.ParseTime(value); err == nil {
-		return max(time.Until(when), 0)
+		// A far-future date overflows the same way the second count does.
+		return min(max(time.Until(when), 0), maxRetryAfter)
 	}
 	return 0
 }

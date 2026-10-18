@@ -437,7 +437,12 @@ func (observer *streamUsageObserver) consume(frame []byte) {
 	_ = readSSE(strings.NewReader(string(frame)), func(eventName, data string) error {
 		events, err := observer.parser.Parse(eventName, data)
 		if err != nil {
-			if observer.parseErr == nil {
+			// The bytes were already forwarded verbatim, so a frame the
+			// observer cannot parse only matters while the stream is still
+			// open: once the terminal event has been seen, a trailing frame
+			// (a keepalive, or a [DONE] an OpenAI-shaped proxy appends to
+			// every lane) must not turn a complete response into a failure.
+			if observer.parseErr == nil && !observer.normal {
 				observer.parseErr = err
 			}
 			return nil
@@ -511,10 +516,12 @@ func readSSE(reader io.Reader, handler func(eventName, data string) error) error
 		return err
 	}
 	if len(dataLines) > 0 {
-		// A blank line is the SSE record delimiter. Do not parse a final
-		// unterminated record as a complete frame; an EOF without a terminal
-		// event is handled by the caller as a truncated stream.
-		return errSSEUnexpectedEOF
+		// The upstream closed the connection after a complete record but
+		// without its blank-line delimiter, which is what a last write of
+		// "data: [DONE]\n" looks like. Dispatch it: whether the stream really
+		// ended is decided by the terminal event the parser sees, not by the
+		// delimiter, and a genuinely truncated record still fails to parse.
+		return flush()
 	}
 	return nil
 }

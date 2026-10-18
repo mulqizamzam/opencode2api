@@ -295,7 +295,7 @@ func (g *Gateway) handleInference(external wire.Protocol) http.HandlerFunc {
 			}
 			return
 		}
-		responseBody, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
+		responseBody, err := readCappedBody(resp.Body, maxUpstreamResponseBytes)
 		if err != nil {
 			wire.WriteError(w, external, http.StatusBadGateway, "failed to read upstream response", "upstream_error", ids.Request)
 			return
@@ -503,6 +503,24 @@ func (g *Gateway) prepareRouteBodies(from wire.Protocol, route models.Route, inp
 		bodies[tier] = encoded
 	}
 	return bodies, nil
+}
+
+// maxUpstreamResponseBytes bounds one non-streaming upstream body.
+const maxUpstreamResponseBytes = 64 << 20
+
+// readCappedBody reads a body that must fit in limit bytes. The reader is asked
+// for one byte more than the limit so an oversized body is reported; reading
+// exactly limit bytes would hand the caller a silently truncated document, and
+// for a JSON response that means invalid JSON delivered as a success.
+func readCappedBody(body io.Reader, limit int64) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(body, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("upstream response exceeds %d bytes", limit)
+	}
+	return data, nil
 }
 
 func copyErrorResponse(w http.ResponseWriter, protocol wire.Protocol, resp *http.Response, requestID string) {
