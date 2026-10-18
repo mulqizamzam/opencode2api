@@ -73,6 +73,23 @@ func (a *Server) Handler() http.Handler {
 	return a.securityHeaders(telemetry.Recover(a.logger, mux))
 }
 
+// htmlContentTypeFix wraps an http.ResponseWriter to fix Content-Type for HTML files
+// after http.FileServer runs, since FileServer misdetects HTML as video/html.
+type htmlContentTypeFix struct {
+	http.ResponseWriter
+	path   string
+	fixed  bool
+}
+
+func (w *htmlContentTypeFix) WriteHeader(statusCode int) {
+	// Fix Content-Type for HTML files after FileServer runs
+	if !w.fixed && (w.path == "/" || w.path == "/index.html" || strings.HasSuffix(w.path, ".html")) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.fixed = true
+	}
+	w.ResponseWriter.WriteHeader(statusCode)
+}
+
 func (a *Server) staticHandler() http.Handler {
 	assets := webui.Assets
 	files := http.FileServer(http.FS(assets))
@@ -86,7 +103,9 @@ func (a *Server) staticHandler() http.Handler {
 				r.URL.Path = "/"
 			}
 		}
-		files.ServeHTTP(w, r)
+		// Wrap ResponseWriter to fix Content-Type after FileServer runs
+		fixed := &htmlContentTypeFix{ResponseWriter: w, path: r.URL.Path}
+		files.ServeHTTP(fixed, r)
 	})
 }
 
